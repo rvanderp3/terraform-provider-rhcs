@@ -23,10 +23,14 @@ import (
 	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -71,25 +75,43 @@ func (r *ClusterAutoscalerResource) Schema(ctx context.Context, req resource.Sch
 			"max_pod_grace_period": schema.Int64Attribute{
 				Description: "Gives pods graceful termination time before scaling down.",
 				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 			},
 			"pod_priority_threshold": schema.Int64Attribute{
 				Description: "To allow users to schedule 'best-effort' pods, which shouldn't trigger " +
 					"Cluster Autoscaler actions, but only run when there are spare resources available.",
 				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 			},
 			"max_node_provision_time": schema.StringAttribute{
 				Description: "Maximum time cluster-autoscaler waits for node to be provisioned.",
 				Optional:    true,
-				Validators:  []validator.String{autoscaler.PositiveDurationStringValidator("max node provision time validation")},
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+				Validators: []validator.String{autoscaler.PositiveDurationStringValidator("max node provision time validation")},
 			},
 			"resource_limits": schema.SingleNestedAttribute{
 				Description: "Constraints of autoscaling resources.",
 				Optional:    true,
+				Computed:    true,
+				// Copying the whole prior object could freeze a null child that the API defaults on update.
 				Attributes: map[string]schema.Attribute{
-					"max_nodes_total": schema.Int64Attribute{
+					maxNodesTotalAttribute: schema.Int64Attribute{
 						Description: "Maximum number of nodes in all node groups. Cluster autoscaler will " +
 							"not grow the cluster beyond this number.",
 						Optional: true,
+						Computed: true,
+						PlanModifiers: []planmodifier.Int64{
+							int64planmodifier.UseNonNullStateForUnknown(),
+						},
 					},
 				},
 			},
@@ -335,14 +357,15 @@ func populateAutoscalerState(object *cmv1.ClusterAutoscaler, clusterId string, s
 
 	state.MaxNodeProvisionTime = common.EmptiableStringToStringType(object.MaxNodeProvisionTime())
 
+	state.ResourceLimits = types.ObjectNull(resourceLimitsAttributeTypes)
 	if object.ResourceLimits() != nil {
-		state.ResourceLimits = &AutoscalerResourceLimits{}
-
+		maxNodesTotal := types.Int64Null()
 		if value, exists := object.ResourceLimits().GetMaxNodesTotal(); exists {
-			state.ResourceLimits.MaxNodesTotal = types.Int64Value(int64(value))
-		} else {
-			state.ResourceLimits.MaxNodesTotal = types.Int64Null()
+			maxNodesTotal = types.Int64Value(int64(value))
 		}
+		state.ResourceLimits = types.ObjectValueMust(resourceLimitsAttributeTypes, map[string]attr.Value{
+			maxNodesTotalAttribute: maxNodesTotal,
+		})
 	}
 	return nil
 }
@@ -351,23 +374,23 @@ func populateAutoscalerState(object *cmv1.ClusterAutoscaler, clusterId string, s
 func clusterAutoscalerStateToObject(state *ClusterAutoscalerState) (*cmv1.ClusterAutoscaler, error) {
 	builder := cmv1.NewClusterAutoscaler()
 
-	if !state.MaxPodGracePeriod.IsNull() {
+	if !state.MaxPodGracePeriod.IsNull() && !state.MaxPodGracePeriod.IsUnknown() {
 		builder.MaxPodGracePeriod(int(state.MaxPodGracePeriod.ValueInt64()))
 	}
 
-	if !state.PodPriorityThreshold.IsNull() {
+	if !state.PodPriorityThreshold.IsNull() && !state.PodPriorityThreshold.IsUnknown() {
 		builder.PodPriorityThreshold(int(state.PodPriorityThreshold.ValueInt64()))
 	}
 
-	if !state.MaxNodeProvisionTime.IsNull() {
+	if !state.MaxNodeProvisionTime.IsNull() && !state.MaxNodeProvisionTime.IsUnknown() {
 		builder.MaxNodeProvisionTime(state.MaxNodeProvisionTime.ValueString())
 	}
 
-	if state.ResourceLimits != nil {
+	if !state.ResourceLimits.IsNull() && !state.ResourceLimits.IsUnknown() {
 		resourceLimitsBuilder := cmv1.NewAutoscalerResourceLimits()
-
-		if !state.ResourceLimits.MaxNodesTotal.IsNull() {
-			resourceLimitsBuilder.MaxNodesTotal(int(state.ResourceLimits.MaxNodesTotal.ValueInt64()))
+		maxNodesTotal := state.ResourceLimits.Attributes()[maxNodesTotalAttribute].(types.Int64)
+		if !maxNodesTotal.IsNull() && !maxNodesTotal.IsUnknown() {
+			resourceLimitsBuilder.MaxNodesTotal(int(maxNodesTotal.ValueInt64()))
 		}
 
 		builder.ResourceLimits(resourceLimitsBuilder)

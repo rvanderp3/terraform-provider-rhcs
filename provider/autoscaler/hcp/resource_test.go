@@ -17,27 +17,14 @@ limitations under the License.
 package hcp
 
 import (
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	. "github.com/onsi/ginkgo/v2" // nolint
 	. "github.com/onsi/gomega"    // nolint
 	cmv1 "github.com/openshift-online/ocm-sdk-go/clustersmgmt/v1"
 )
 
-const (
-	clusterId = "123"
-)
-
-var (
-	updateState = &ClusterAutoscalerState{
-		Cluster:              types.StringValue(clusterId),
-		MaxPodGracePeriod:    types.Int64Value(5),
-		PodPriorityThreshold: types.Int64Value(-5),
-		MaxNodeProvisionTime: types.StringValue("30m"),
-		ResourceLimits: &AutoscalerResourceLimits{
-			MaxNodesTotal: types.Int64Value(50),
-		},
-	}
-)
+const clusterId = "123"
 
 var _ = Describe("Cluster Autoscaler", func() {
 	Context("conversion to terraform state", func() {
@@ -46,45 +33,37 @@ var _ = Describe("Cluster Autoscaler", func() {
 				MaxPodGracePeriod(10).
 				PodPriorityThreshold(-10).
 				MaxNodeProvisionTime("1h").
-				ResourceLimits(cmv1.NewAutoscalerResourceLimits().
-					MaxNodesTotal(10)).
-				ScaleDown(cmv1.NewAutoscalerScaleDownConfig().
-					Enabled(true).
-					UnneededTime("2h").
-					UtilizationThreshold("0.5").
-					DelayAfterAdd("3h").
-					DelayAfterDelete("4h").
-					DelayAfterFailure("5h")).Build()
-
+				ResourceLimits(cmv1.NewAutoscalerResourceLimits().MaxNodesTotal(10)).Build()
 			Expect(err).ToNot(HaveOccurred())
 
 			var state ClusterAutoscalerState
-			populateAutoscalerState(autoscalerSpec, clusterId, &state)
-
+			Expect(populateAutoscalerState(autoscalerSpec, clusterId, &state)).To(Succeed())
 			Expect(state).To(Equal(ClusterAutoscalerState{
 				Cluster:              types.StringValue(clusterId),
 				MaxPodGracePeriod:    types.Int64Value(10),
 				PodPriorityThreshold: types.Int64Value(-10),
 				MaxNodeProvisionTime: types.StringValue("1h"),
-				ResourceLimits: &AutoscalerResourceLimits{
-					MaxNodesTotal: types.Int64Value(10),
-				},
+				ResourceLimits: types.ObjectValueMust(resourceLimitsAttributeTypes, map[string]attr.Value{
+					"max_nodes_total": types.Int64Value(10),
+				}),
 			}))
 		})
 
-		It("successfully populates empty fields", func() {
+		It("clears fields omitted by the API on refresh", func() {
 			autoscaler, err := cmv1.NewClusterAutoscaler().Build()
 			Expect(err).ToNot(HaveOccurred())
-
-			var state ClusterAutoscalerState
-			populateAutoscalerState(autoscaler, clusterId, &state)
-
+			state := ClusterAutoscalerState{
+				ResourceLimits: types.ObjectValueMust(resourceLimitsAttributeTypes, map[string]attr.Value{
+					"max_nodes_total": types.Int64Value(10),
+				}),
+			}
+			Expect(populateAutoscalerState(autoscaler, clusterId, &state)).To(Succeed())
 			Expect(state).To(Equal(ClusterAutoscalerState{
 				Cluster:              types.StringValue(clusterId),
 				MaxPodGracePeriod:    types.Int64Null(),
 				PodPriorityThreshold: types.Int64Null(),
 				MaxNodeProvisionTime: types.StringNull(),
-				ResourceLimits:       nil,
+				ResourceLimits:       types.ObjectNull(resourceLimitsAttributeTypes),
 			}))
 		})
 	})
@@ -96,55 +75,58 @@ var _ = Describe("Cluster Autoscaler", func() {
 				MaxPodGracePeriod:    types.Int64Value(10),
 				PodPriorityThreshold: types.Int64Value(-10),
 				MaxNodeProvisionTime: types.StringValue("1h"),
-				ResourceLimits: &AutoscalerResourceLimits{
-					MaxNodesTotal: types.Int64Value(10),
-				},
+				ResourceLimits: types.ObjectValueMust(resourceLimitsAttributeTypes, map[string]attr.Value{
+					"max_nodes_total": types.Int64Value(10),
+				}),
 			}
-
 			autoscaler, err := clusterAutoscalerStateToObject(&state)
 			Expect(err).ToNot(HaveOccurred())
-
-			expectedAutoscaler, err := cmv1.NewClusterAutoscaler().
+			expected, err := cmv1.NewClusterAutoscaler().
 				MaxPodGracePeriod(10).
 				PodPriorityThreshold(-10).
 				MaxNodeProvisionTime("1h").
-				ResourceLimits(cmv1.NewAutoscalerResourceLimits().
-					MaxNodesTotal(10)).
-				ScaleDown(cmv1.NewAutoscalerScaleDownConfig().
-					Enabled(true).
-					UnneededTime("2h").
-					UtilizationThreshold("0.5").
-					DelayAfterAdd("3h").
-					DelayAfterDelete("4h").
-					DelayAfterFailure("5h")).Build()
-
+				ResourceLimits(cmv1.NewAutoscalerResourceLimits().MaxNodesTotal(10)).Build()
 			Expect(err).ToNot(HaveOccurred())
-
-			Expect(autoscaler).To(Equal(expectedAutoscaler))
+			Expect(autoscaler).To(Equal(expected))
 		})
 
-		It("successfully converts when all state fields are null", func() {
-			state := ClusterAutoscalerState{
-				Cluster:              types.StringValue(clusterId),
+		DescribeTable("omits unset fields instead of sending zero values", func(state ClusterAutoscalerState) {
+			autoscaler, err := clusterAutoscalerStateToObject(&state)
+			Expect(err).ToNot(HaveOccurred())
+			expected, err := cmv1.NewClusterAutoscaler().Build()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(autoscaler).To(Equal(expected))
+		},
+			Entry("null values", ClusterAutoscalerState{
 				MaxPodGracePeriod:    types.Int64Null(),
 				PodPriorityThreshold: types.Int64Null(),
 				MaxNodeProvisionTime: types.StringNull(),
-				ResourceLimits:       nil,
-			}
+				ResourceLimits:       types.ObjectNull(resourceLimitsAttributeTypes),
+			}),
+			Entry("unknown values", ClusterAutoscalerState{
+				MaxPodGracePeriod:    types.Int64Unknown(),
+				PodPriorityThreshold: types.Int64Unknown(),
+				MaxNodeProvisionTime: types.StringUnknown(),
+				ResourceLimits:       types.ObjectUnknown(resourceLimitsAttributeTypes),
+			}),
+		)
 
-			autoscaler, err := clusterAutoscalerStateToObject(&state)
+		It("preserves explicitly configured zero values", func() {
+			autoscaler, err := clusterAutoscalerStateToObject(&ClusterAutoscalerState{
+				MaxPodGracePeriod:    types.Int64Value(0),
+				PodPriorityThreshold: types.Int64Value(0),
+				MaxNodeProvisionTime: types.StringNull(),
+				ResourceLimits: types.ObjectValueMust(resourceLimitsAttributeTypes, map[string]attr.Value{
+					"max_nodes_total": types.Int64Value(0),
+				}),
+			})
 			Expect(err).ToNot(HaveOccurred())
-
-			expectedAutoscaler, err := cmv1.NewClusterAutoscaler().Build()
-			Expect(err).ToNot(HaveOccurred())
-			Expect(autoscaler).To(Equal(expectedAutoscaler))
+			_, exists := autoscaler.GetMaxPodGracePeriod()
+			Expect(exists).To(BeTrue())
+			_, exists = autoscaler.GetPodPriorityThreshold()
+			Expect(exists).To(BeTrue())
+			_, exists = autoscaler.ResourceLimits().GetMaxNodesTotal()
+			Expect(exists).To(BeTrue())
 		})
 	})
 })
-
-func checkOutputAgainstState(output *cmv1.ClusterAutoscaler, state *ClusterAutoscalerState) {
-	Expect(output.MaxPodGracePeriod()).To(Equal(state.MaxPodGracePeriod))
-	Expect(output.MaxNodeProvisionTime()).To(Equal(state.MaxNodeProvisionTime))
-	Expect(output.ResourceLimits().MaxNodesTotal()).To(Equal(state.ResourceLimits.MaxNodesTotal))
-	Expect(output.ResourceLimits()).To(Equal(state.ResourceLimits))
-}

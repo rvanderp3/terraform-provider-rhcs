@@ -134,6 +134,123 @@ var _ = Describe("Hcp Cluster Autoscaler", func() {
 		})
 	})
 
+	Context("backend defaults", func() {
+		const autoscaler = `{
+			"kind": "ClusterAutoscaler",
+			"max_pod_grace_period": 600,
+			"pod_priority_threshold": -10,
+			"max_node_provision_time": "15m",
+			"resource_limits": {"max_nodes_total": 180}
+		}`
+		const clusterOnly = `resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" { cluster = "123" }`
+
+		BeforeEach(func() {
+			TestServer.RouteToHandler(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/autoscaler",
+				RespondWithJSON(http.StatusOK, autoscaler))
+		})
+
+		DescribeTable("accepts persisted defaults without drift", func(config string, patch map[string]any) {
+			TestServer.AppendHandlers(
+				CombineHandlers(
+					VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123"),
+					RespondWithJSON(http.StatusOK, `{"id":"123","state":"ready"}`),
+				),
+				CombineHandlers(
+					VerifyRequest(http.MethodPatch, "/api/clusters_mgmt/v1/clusters/123/autoscaler"),
+					VerifyJQ("del(.kind)", patch),
+					RespondWithJSON(http.StatusOK, autoscaler),
+				),
+			)
+			Terraform.Source(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
+				cluster = "123"
+				` + config + `
+			}`)
+			Expect(Terraform.Apply().ExitCode).To(BeZero())
+			actualResource := Terraform.Resource("rhcs_hcp_cluster_autoscaler", "cluster_autoscaler").(map[string]any)
+			Expect(actualResource["attributes"]).To(Equal(map[string]any{
+				"cluster": "123", "max_pod_grace_period": float64(600),
+				"pod_priority_threshold": float64(-10), "max_node_provision_time": "15m",
+				"resource_limits": map[string]any{"max_nodes_total": float64(180)},
+			}))
+			Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
+
+			By("retaining remote values when configuration is removed, not resetting them")
+			Terraform.Source(clusterOnly)
+			Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
+			Expect(TestServer.ReceivedRequests()).To(HaveLen(4))
+		},
+			Entry("with only cluster configured", "", map[string]any{}),
+			Entry("with one scalar configured", `max_node_provision_time = "15m"`,
+				map[string]any{"max_node_provision_time": "15m"}),
+			Entry("with an empty resource limits object", `resource_limits = {}`,
+				map[string]any{"resource_limits": map[string]any{}}),
+			Entry("with all attributes configured", `
+				max_pod_grace_period = 600
+				pod_priority_threshold = -10
+				max_node_provision_time = "15m"
+				resource_limits = { max_nodes_total = 180 }
+			`, map[string]any{
+				"max_pod_grace_period": float64(600), "pod_priority_threshold": float64(-10),
+				"max_node_provision_time": "15m", "resource_limits": map[string]any{"max_nodes_total": float64(180)},
+			}),
+		)
+
+		DescribeTable("accepts a newly populated nested default during an update", func(resourceLimitsConfig string, patchLimits any) {
+			TestServer.RouteToHandler(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/autoscaler",
+				RespondWithJSON(http.StatusOK, `{
+					"max_pod_grace_period":600,"pod_priority_threshold":-10,
+					"max_node_provision_time":"20m","resource_limits":{}
+				}`))
+			Terraform.Source(clusterOnly)
+			Expect(Terraform.Import("rhcs_hcp_cluster_autoscaler.cluster_autoscaler", "123").ExitCode).To(BeZero())
+			TestServer.AppendHandlers(CombineHandlers(
+				VerifyRequest(http.MethodPatch, "/api/clusters_mgmt/v1/clusters/123/autoscaler"),
+				VerifyJQ(".resource_limits", patchLimits),
+				RespondWithJSON(http.StatusOK, autoscaler),
+			))
+			Terraform.Source(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
+				cluster = "123"
+				max_node_provision_time = "15m"
+				` + resourceLimitsConfig + `
+			}`)
+			Expect(Terraform.Apply().ExitCode).To(BeZero())
+			TestServer.RouteToHandler(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/autoscaler",
+				RespondWithJSON(http.StatusOK, autoscaler))
+			Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
+		},
+			Entry("with an empty configured parent", "resource_limits = {}", map[string]any{}),
+			Entry("with an omitted parent", "", nil),
+		)
+
+		It("imports defaults and preserves them during a partial update", func() {
+			Terraform.Source(clusterOnly)
+			Expect(Terraform.Import("rhcs_hcp_cluster_autoscaler.cluster_autoscaler", "123").ExitCode).To(BeZero())
+			Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
+			TestServer.AppendHandlers(CombineHandlers(
+				VerifyRequest(http.MethodPatch, "/api/clusters_mgmt/v1/clusters/123/autoscaler"),
+				VerifyJQ("del(.kind)", map[string]any{
+					"max_pod_grace_period": float64(600), "pod_priority_threshold": float64(-10),
+					"max_node_provision_time": "20m",
+				}),
+				RespondWithJSON(http.StatusOK, `{
+					"max_pod_grace_period":600,"pod_priority_threshold":-10,
+					"max_node_provision_time":"20m","resource_limits":{"max_nodes_total":180}
+				}`),
+			))
+			Terraform.Source(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
+				cluster = "123"
+				max_node_provision_time = "20m"
+			}`)
+			Expect(Terraform.Apply().ExitCode).To(BeZero())
+			TestServer.RouteToHandler(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/autoscaler",
+				RespondWithJSON(http.StatusOK, `{
+					"max_pod_grace_period":600,"pod_priority_threshold":-10,
+					"max_node_provision_time":"20m","resource_limits":{"max_nodes_total":180}
+				}`))
+			Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
+		})
+	})
+
 	Context("importing", func() {
 		It("fails if resource does not exist in OCM", func() {
 			TestServer.AppendHandlers(

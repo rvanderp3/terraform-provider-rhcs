@@ -17,17 +17,20 @@ limitations under the License.
 package hcp
 
 import (
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 type ClusterAutoscalerState struct {
-	Cluster              types.String              `tfsdk:"cluster"`
-	MaxPodGracePeriod    types.Int64               `tfsdk:"max_pod_grace_period"`
-	PodPriorityThreshold types.Int64               `tfsdk:"pod_priority_threshold"`
-	MaxNodeProvisionTime types.String              `tfsdk:"max_node_provision_time"`
-	ResourceLimits       *AutoscalerResourceLimits `tfsdk:"resource_limits"`
+	Cluster              types.String `tfsdk:"cluster"`
+	MaxPodGracePeriod    types.Int64  `tfsdk:"max_pod_grace_period"`
+	PodPriorityThreshold types.Int64  `tfsdk:"pod_priority_threshold"`
+	MaxNodeProvisionTime types.String `tfsdk:"max_node_provision_time"`
+	ResourceLimits       types.Object `tfsdk:"resource_limits"`
 }
 
-type AutoscalerResourceLimits struct {
-	MaxNodesTotal types.Int64 `tfsdk:"max_nodes_total"`
+const maxNodesTotalAttribute = "max_nodes_total"
+
+var resourceLimitsAttributeTypes = map[string]attr.Type{
+	maxNodesTotalAttribute: types.Int64Type,
 }

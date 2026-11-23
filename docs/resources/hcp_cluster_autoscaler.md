@@ -10,6 +10,10 @@ description: |-
 
 Cluster-wide autoscaling configuration.
 
+Omitted settings use the values returned by the API. Removing a setting from
+configuration retains its current value; it does not reset the setting to a
+default. Configure an explicit value to change it.
+
 ## Example Usage
 
 ```terraform
