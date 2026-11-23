@@ -59,6 +59,7 @@ func New() resource.Resource {
 var _ resource.Resource = &ClusterAutoscalerResource{}
 var _ resource.ResourceWithImportState = &ClusterAutoscalerResource{}
 var _ resource.ResourceWithConfigure = &ClusterAutoscalerResource{}
+var _ resource.ResourceWithModifyPlan = &ClusterAutoscalerResource{}
 
 func (r *ClusterAutoscalerResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_hcp_cluster_autoscaler"
@@ -116,7 +117,8 @@ func (r *ClusterAutoscalerResource) Schema(ctx context.Context, req resource.Sch
 				Computed:    true,
 				Attributes: map[string]schema.Attribute{
 					enabledAttribute: schema.BoolAttribute{
-						Description:   "Should cluster-autoscaler scale down the cluster.",
+						Description: "Should cluster-autoscaler scale down the cluster. " +
+							"When false, omit the other scale_down settings from configuration.",
 						Optional:      true,
 						Computed:      true,
 						PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseNonNullStateForUnknown()},
@@ -182,6 +184,25 @@ func (r *ClusterAutoscalerResource) Schema(ctx context.Context, req resource.Sch
 	}
 	return
 }
+
+func (r *ClusterAutoscalerResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest,
+	resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var scaleDown types.Object
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("scale_down"), &scaleDown)...)
+	if resp.Diagnostics.HasError() || scaleDown.IsNull() || scaleDown.IsUnknown() {
+		return
+	}
+	var config types.Object
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("scale_down"), &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(validateScaleDownConfig(config, scaleDown.Attributes()[enabledAttribute].(types.Bool))...)
+}
+
 func (r *ClusterAutoscalerResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
@@ -504,6 +525,10 @@ func clusterAutoscalerStateToObject(state *ClusterAutoscalerState) (*cmv1.Cluste
 		scaleDown := cmv1.NewAutoscalerScaleDownConfig()
 		if value := values[enabledAttribute].(types.Bool); !value.IsNull() && !value.IsUnknown() {
 			scaleDown.Enabled(value.ValueBool())
+			if !value.ValueBool() {
+				// Persisted tuning values must not accompany ScaleUpOnly requests.
+				return builder.ScaleDown(scaleDown).Build()
+			}
 		}
 		if value := values[unneededTimeAttribute].(types.String); !value.IsNull() && !value.IsUnknown() {
 			scaleDown.UnneededTime(value.ValueString())

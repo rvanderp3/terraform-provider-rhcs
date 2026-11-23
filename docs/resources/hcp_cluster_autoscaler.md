@@ -19,6 +19,22 @@ version 4.20 or newer. The API enforces this minimum version, whole-second
 scale-down durations from 0 to 24 hours, and at most two decimal places for
 `scale_down.utilization_threshold`. Ratios use strings such as `"0.5"` for 50%.
 
+## Disabling scale-down
+
+To disable scale-down, configure only `enabled = false` within `scale_down`:
+
+```terraform
+scale_down = {
+  enabled = false
+}
+```
+
+Remove any explicitly configured timing or utilization settings from that object.
+The provider omits those fields from the PATCH request even when backend values
+are present in Terraform state. Other autoscaler settings remain unchanged.
+Set `enabled = true` when configuring tuning values on a disabled cluster;
+omitting `enabled` retains the current setting.
+
 ## Example Usage
 
 ```terraform
@@ -77,7 +93,7 @@ Optional:
 - `delay_after_add` (String) How long after scale up that scale down evaluation resumes.
 - `delay_after_delete` (String) How long after node deletion that scale down evaluation resumes.
 - `delay_after_failure` (String) How long after scale down failure that scale down evaluation resumes.
-- `enabled` (Boolean) Should cluster-autoscaler scale down the cluster.
+- `enabled` (Boolean) Should cluster-autoscaler scale down the cluster. When false, omit the other scale_down settings from configuration.
 - `unneeded_time` (String) How long a node should be unneeded before it is eligible for scale down.
 - `utilization_threshold` (String) Node utilization level, defined as sum of requested resources divided by capacity, below which a node can be considered for scale down.
 

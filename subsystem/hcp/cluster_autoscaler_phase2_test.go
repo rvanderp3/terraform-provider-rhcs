@@ -108,6 +108,110 @@ var _ = Describe("HCP autoscaler ported fields", func() {
 		Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
 	})
 
+	It("creates with scale-down disabled and no tuning configuration", func() {
+		response := strings.ReplaceAll(body, `"enabled":true`, `"enabled":false`)
+		TestServer.AppendHandlers(
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123"),
+				RespondWithJSON(http.StatusOK, `{"id":"123","state":"ready"}`),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodPatch, endpoint),
+				VerifyJSON(`{"kind":"ClusterAutoscaler","scale_down":{"enabled":false}}`),
+				RespondWithJSON(http.StatusOK, response),
+			),
+		)
+		Terraform.Source(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
+			cluster = "123"
+			scale_down = { enabled = false, unneeded_time = null }
+		}`)
+		Expect(Terraform.Apply().ExitCode).To(BeZero())
+		TestServer.RouteToHandler(http.MethodGet, endpoint, RespondWithJSON(http.StatusOK, response))
+		Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
+	})
+
+	It("disables and re-enables scale-down with persisted computed defaults", func() {
+		TestServer.RouteToHandler(http.MethodGet, endpoint, RespondWithJSON(http.StatusOK, body))
+		Terraform.Source(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" { cluster = "123" }`)
+		Expect(Terraform.Import("rhcs_hcp_cluster_autoscaler.cluster_autoscaler", "123").ExitCode).To(BeZero())
+
+		for _, step := range []struct {
+			name           string
+			enabled        bool
+			provisionTime  string
+			patchScaleDown map[string]any
+		}{
+			{"disable", false, "15m", map[string]any{"enabled": false}},
+			{"re-enable", true, "15m", map[string]any{
+				"enabled": true, "unneeded_time": "10m", "utilization_threshold": "0.5",
+				"delay_after_add": "10m", "delay_after_delete": "0s", "delay_after_failure": "3m",
+			}},
+			{"disable and change an unrelated scalar", false, "20m", map[string]any{"enabled": false}},
+			{"change an unrelated scalar while disabled", false, "15m", map[string]any{"enabled": false}},
+		} {
+			By(step.name)
+			response := strings.ReplaceAll(body, `"enabled":true`, fmt.Sprintf(`"enabled":%t`, step.enabled))
+			response = strings.ReplaceAll(response, `"max_node_provision_time":"15m"`,
+				fmt.Sprintf(`"max_node_provision_time":%q`, step.provisionTime))
+			TestServer.AppendHandlers(CombineHandlers(
+				VerifyRequest(http.MethodPatch, endpoint),
+				VerifyJQ(".scale_down", step.patchScaleDown),
+				VerifyJQ(".max_node_provision_time", step.provisionTime),
+				VerifyJQ(".balancing_ignored_labels", []any{"custom.label/zone"}),
+				RespondWithJSON(http.StatusOK, response),
+			))
+			Terraform.Source(fmt.Sprintf(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
+				cluster = "123"
+				max_node_provision_time = %q
+				scale_down = { enabled = %t }
+			}`, step.provisionTime, step.enabled))
+			Expect(Terraform.Apply().ExitCode).To(BeZero())
+			resource := Terraform.Resource("rhcs_hcp_cluster_autoscaler", "cluster_autoscaler").(map[string]any)
+			attributes := resource["attributes"].(map[string]any)
+			Expect(attributes["scale_down"]).To(Equal(map[string]any{
+				"enabled": step.enabled, "unneeded_time": "10m", "utilization_threshold": "0.5",
+				"delay_after_add": "10m", "delay_after_delete": "0s", "delay_after_failure": "3m",
+			}))
+			Expect(attributes["max_node_provision_time"]).To(Equal(step.provisionTime))
+			TestServer.RouteToHandler(http.MethodGet, endpoint, RespondWithJSON(http.StatusOK, response))
+			Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
+		}
+	})
+
+	It("rejects tuning when enabled is omitted but prior state is disabled", func() {
+		disabled := strings.ReplaceAll(body, `"enabled":true`, `"enabled":false`)
+		TestServer.RouteToHandler(http.MethodGet, endpoint, RespondWithJSON(http.StatusOK, disabled))
+		Terraform.Source(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" { cluster = "123" }`)
+		Expect(Terraform.Import("rhcs_hcp_cluster_autoscaler.cluster_autoscaler", "123").ExitCode).To(BeZero())
+		Terraform.Source(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
+			cluster = "123"
+			scale_down = { unneeded_time = "20m" }
+		}`)
+		output := Terraform.Run("plan")
+		Expect(output.ExitCode).NotTo(BeZero())
+		output.VerifyErrorContainsSubstring("cannot be configured when scale_down.enabled is false")
+		for _, request := range TestServer.ReceivedRequests() {
+			Expect(request.Method).To(Equal(http.MethodGet))
+		}
+	})
+
+	DescribeTable("rejects explicit tuning when scale-down is disabled", func(field, value string) {
+		Terraform.Source(fmt.Sprintf(`resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
+			cluster = "123"
+			scale_down = { enabled = false, %s = %q }
+		}`, field, value))
+		output := Terraform.Run("plan", "-refresh=false")
+		Expect(output.ExitCode).NotTo(BeZero())
+		output.VerifyErrorContainsSubstring("cannot be configured when scale_down.enabled is false")
+		Expect(TestServer.ReceivedRequests()).To(BeEmpty())
+	},
+		Entry("unneeded time", "unneeded_time", "10m"),
+		Entry("utilization threshold", "utilization_threshold", "0.5"),
+		Entry("add delay", "delay_after_add", "10m"),
+		Entry("delete delay", "delay_after_delete", "0s"),
+		Entry("failure delay", "delay_after_failure", "3m"),
+	)
+
 	DescribeTable("surfaces authoritative API rejection", func(config, reason string) {
 		TestServer.AppendHandlers(
 			CombineHandlers(

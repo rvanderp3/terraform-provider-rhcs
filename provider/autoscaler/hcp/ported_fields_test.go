@@ -66,6 +66,53 @@ var _ = Describe("HCP ported autoscaler mapping", func() {
 		Expect(object).To(Equal(expected))
 	})
 
+	DescribeTable("only omits known tuning fields when scale-down is explicitly disabled", func(enabled types.Bool) {
+		object, err := clusterAutoscalerStateToObject(&ClusterAutoscalerState{
+			MaxNodeProvisionTime: types.StringValue("20m"),
+			ScaleDown: types.ObjectValueMust(scaleDownAttributeTypes, map[string]attr.Value{
+				"enabled": enabled, "unneeded_time": types.StringValue("10m"),
+				"utilization_threshold": types.StringValue("0.5"), "delay_after_add": types.StringValue("10m"),
+				"delay_after_delete": types.StringValue("0s"), "delay_after_failure": types.StringValue("3m"),
+			}),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		scaleDown := cmv1.NewAutoscalerScaleDownConfig()
+		if !enabled.IsUnknown() && !enabled.IsNull() {
+			scaleDown.Enabled(enabled.ValueBool())
+		}
+		if enabled.IsUnknown() || enabled.IsNull() || enabled.ValueBool() {
+			scaleDown.UnneededTime("10m").UtilizationThreshold("0.5").
+				DelayAfterAdd("10m").DelayAfterDelete("0s").DelayAfterFailure("3m")
+		}
+		expected, err := cmv1.NewClusterAutoscaler().MaxNodeProvisionTime("20m").ScaleDown(scaleDown).Build()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(object).To(Equal(expected))
+	},
+		Entry("false", types.BoolValue(false)),
+		Entry("true", types.BoolValue(true)),
+		Entry("unknown", types.BoolUnknown()),
+		Entry("omitted", types.BoolNull()),
+	)
+
+	DescribeTable("defers conflict validation for unset scale-down objects", func(value types.Object) {
+		Expect(validateScaleDownConfig(value, types.BoolValue(false))).To(BeEmpty())
+	},
+		Entry("null", types.ObjectNull(scaleDownAttributeTypes)),
+		Entry("unknown", types.ObjectUnknown(scaleDownAttributeTypes)),
+	)
+
+	DescribeTable("does not infer disabled from an unset enabled value", func(enabled types.Bool) {
+		config := types.ObjectValueMust(scaleDownAttributeTypes, map[string]attr.Value{
+			"enabled": enabled, "unneeded_time": types.StringValue("10m"),
+			"utilization_threshold": types.StringNull(), "delay_after_add": types.StringNull(),
+			"delay_after_delete": types.StringNull(), "delay_after_failure": types.StringNull(),
+		})
+		Expect(validateScaleDownConfig(config, enabled)).To(BeEmpty())
+	},
+		Entry("null", types.BoolNull()),
+		Entry("unknown", types.BoolUnknown()),
+	)
+
 	It("does not expose Classic-only attributes or resource limits", func() {
 		var response resource.SchemaResponse
 		(&ClusterAutoscalerResource{}).Schema(context.Background(), resource.SchemaRequest{}, &response)

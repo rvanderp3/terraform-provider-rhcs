@@ -23,6 +23,22 @@ version 4.20 or newer. The API enforces this minimum version, whole-second
 scale-down durations from 0 to 24 hours, and at most two decimal places for
 `scale_down.utilization_threshold`. Ratios use strings such as `"0.5"` for 50%.
 
+## Disabling scale-down
+
+To disable scale-down, configure only `enabled = false` within `scale_down`:
+
+```terraform
+scale_down = {
+  enabled = false
+}
+```
+
+Remove any explicitly configured timing or utilization settings from that object.
+The provider omits those fields from the PATCH request even when backend values
+are present in Terraform state. Other autoscaler settings remain unchanged.
+Set `enabled = true` when configuring tuning values on a disabled cluster;
+omitting `enabled` retains the current setting.
+
 ## Example Usage
 
 {{tffile "examples/resources/hcp_cluster_autoscaler/example_1.tf"}}
