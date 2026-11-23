@@ -39,10 +39,12 @@ var _ = Describe("Cluster Autoscaler", func() {
 			var state ClusterAutoscalerState
 			Expect(populateAutoscalerState(autoscalerSpec, clusterId, &state)).To(Succeed())
 			Expect(state).To(Equal(ClusterAutoscalerState{
-				Cluster:              types.StringValue(clusterId),
-				MaxPodGracePeriod:    types.Int64Value(10),
-				PodPriorityThreshold: types.Int64Value(-10),
-				MaxNodeProvisionTime: types.StringValue("1h"),
+				BalancingIgnoredLabels: types.ListNull(types.StringType),
+				ScaleDown:              types.ObjectNull(scaleDownAttributeTypes),
+				Cluster:                types.StringValue(clusterId),
+				MaxPodGracePeriod:      types.Int64Value(10),
+				PodPriorityThreshold:   types.Int64Value(-10),
+				MaxNodeProvisionTime:   types.StringValue("1h"),
 				ResourceLimits: types.ObjectValueMust(resourceLimitsAttributeTypes, map[string]attr.Value{
 					"max_nodes_total": types.Int64Value(10),
 				}),
@@ -59,11 +61,13 @@ var _ = Describe("Cluster Autoscaler", func() {
 			}
 			Expect(populateAutoscalerState(autoscaler, clusterId, &state)).To(Succeed())
 			Expect(state).To(Equal(ClusterAutoscalerState{
-				Cluster:              types.StringValue(clusterId),
-				MaxPodGracePeriod:    types.Int64Null(),
-				PodPriorityThreshold: types.Int64Null(),
-				MaxNodeProvisionTime: types.StringNull(),
-				ResourceLimits:       types.ObjectNull(resourceLimitsAttributeTypes),
+				BalancingIgnoredLabels: types.ListNull(types.StringType),
+				ScaleDown:              types.ObjectNull(scaleDownAttributeTypes),
+				Cluster:                types.StringValue(clusterId),
+				MaxPodGracePeriod:      types.Int64Null(),
+				PodPriorityThreshold:   types.Int64Null(),
+				MaxNodeProvisionTime:   types.StringNull(),
+				ResourceLimits:         types.ObjectNull(resourceLimitsAttributeTypes),
 			}))
 		})
 	})

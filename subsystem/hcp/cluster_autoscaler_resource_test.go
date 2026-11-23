@@ -170,7 +170,9 @@ var _ = Describe("Hcp Cluster Autoscaler", func() {
 			Expect(actualResource["attributes"]).To(Equal(map[string]any{
 				"cluster": "123", "max_pod_grace_period": float64(600),
 				"pod_priority_threshold": float64(-10), "max_node_provision_time": "15m",
-				"resource_limits": map[string]any{"max_nodes_total": float64(180)},
+				"resource_limits":          map[string]any{"max_nodes_total": float64(180)},
+				"balancing_ignored_labels": nil,
+				"scale_down":               nil,
 			}))
 			Expect(Terraform.Run("plan", "-detailed-exitcode").ExitCode).To(BeZero())
 
@@ -316,11 +318,13 @@ var _ = Describe("Hcp Cluster Autoscaler", func() {
 
 			Expect(actualResource["attributes"]).To(Equal(
 				map[string]any{
-					"cluster":                 "123",
-					"max_pod_grace_period":    nil,
-					"pod_priority_threshold":  nil,
-					"max_node_provision_time": "1h",
-					"resource_limits":         nil,
+					"cluster":                  "123",
+					"max_pod_grace_period":     nil,
+					"pod_priority_threshold":   nil,
+					"max_node_provision_time":  "1h",
+					"resource_limits":          nil,
+					"balancing_ignored_labels": nil,
+					"scale_down":               nil,
 				},
 			))
 		})
@@ -380,11 +384,13 @@ var _ = Describe("Hcp Cluster Autoscaler", func() {
 
 			Expect(actualResource["attributes"]).To(Equal(
 				map[string]any{
-					"cluster":                 "123",
-					"max_pod_grace_period":    nil,
-					"pod_priority_threshold":  nil,
-					"max_node_provision_time": "2h",
-					"resource_limits":         nil,
+					"cluster":                  "123",
+					"max_pod_grace_period":     nil,
+					"pod_priority_threshold":   nil,
+					"max_node_provision_time":  "2h",
+					"resource_limits":          nil,
+					"balancing_ignored_labels": nil,
+					"scale_down":               nil,
 				},
 			))
 		})

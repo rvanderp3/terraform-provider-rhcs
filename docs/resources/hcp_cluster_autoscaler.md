@@ -14,6 +14,11 @@ Omitted settings use the values returned by the API. Removing a setting from
 configuration retains its current value; it does not reset the setting to a
 default. Configure an explicit value to change it.
 
+The `balancing_ignored_labels` and `scale_down` settings require HCP cluster
+version 4.20 or newer. The API enforces this minimum version, whole-second
+scale-down durations from 0 to 24 hours, and at most two decimal places for
+`scale_down.utilization_threshold`. Ratios use strings such as `"0.5"` for 50%.
+
 ## Example Usage
 
 ```terraform
@@ -25,6 +30,17 @@ resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
 
   resource_limits = {
     max_nodes_total = 5
+  }
+
+  # These settings require an HCP cluster running version 4.20 or newer.
+  balancing_ignored_labels = ["custom.label/zone"]
+  scale_down = {
+    enabled               = true
+    unneeded_time         = "10m"
+    utilization_threshold = "0.5"
+    delay_after_add       = "10m"
+    delay_after_delete    = "0s"
+    delay_after_failure   = "3m"
   }
 }
 ```
@@ -38,10 +54,12 @@ resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
 
 ### Optional
 
+- `balancing_ignored_labels` (List of String) Labels that cluster autoscaler should ignore when considering node group similarity. Requires HCP cluster version 4.20 or newer.
 - `max_node_provision_time` (String) Maximum time cluster-autoscaler waits for node to be provisioned.
 - `max_pod_grace_period` (Number) Gives pods graceful termination time before scaling down.
 - `pod_priority_threshold` (Number) To allow users to schedule 'best-effort' pods, which shouldn't trigger Cluster Autoscaler actions, but only run when there are spare resources available.
 - `resource_limits` (Attributes) Constraints of autoscaling resources. (see [below for nested schema](#nestedatt--resource_limits))
+- `scale_down` (Attributes) Configuration of scale down operation. Requires HCP cluster version 4.20 or newer. (see [below for nested schema](#nestedatt--scale_down))
 
 <a id="nestedatt--resource_limits"></a>
 ### Nested Schema for `resource_limits`
@@ -49,6 +67,19 @@ resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
 Optional:
 
 - `max_nodes_total` (Number) Maximum number of nodes in all node groups. Cluster autoscaler will not grow the cluster beyond this number.
+
+
+<a id="nestedatt--scale_down"></a>
+### Nested Schema for `scale_down`
+
+Optional:
+
+- `delay_after_add` (String) How long after scale up that scale down evaluation resumes.
+- `delay_after_delete` (String) How long after node deletion that scale down evaluation resumes.
+- `delay_after_failure` (String) How long after scale down failure that scale down evaluation resumes.
+- `enabled` (Boolean) Should cluster-autoscaler scale down the cluster.
+- `unneeded_time` (String) How long a node should be unneeded before it is eligible for scale down.
+- `utilization_threshold` (String) Node utilization level, defined as sum of requested resources divided by capacity, below which a node can be considered for scale down.
 
 
 

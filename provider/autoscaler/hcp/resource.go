@@ -22,13 +22,16 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -97,6 +100,66 @@ func (r *ClusterAutoscalerResource) Schema(ctx context.Context, req resource.Sch
 					stringplanmodifier.UseStateForUnknown(),
 				},
 				Validators: []validator.String{autoscaler.PositiveDurationStringValidator("max node provision time validation")},
+			},
+			"balancing_ignored_labels": schema.ListAttribute{
+				Description: "Labels that cluster autoscaler should ignore when considering node group similarity. " +
+					"Requires HCP cluster version 4.20 or newer.",
+				ElementType:   types.StringType,
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.List{listplanmodifier.UseNonNullStateForUnknown()},
+				Validators:    []validator.List{listvalidator.SizeAtMost(64)},
+			},
+			"scale_down": schema.SingleNestedAttribute{
+				Description: "Configuration of scale down operation. Requires HCP cluster version 4.20 or newer.",
+				Optional:    true,
+				Computed:    true,
+				Attributes: map[string]schema.Attribute{
+					enabledAttribute: schema.BoolAttribute{
+						Description:   "Should cluster-autoscaler scale down the cluster.",
+						Optional:      true,
+						Computed:      true,
+						PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseNonNullStateForUnknown()},
+					},
+					unneededTimeAttribute: schema.StringAttribute{
+						Description:   "How long a node should be unneeded before it is eligible for scale down.",
+						Optional:      true,
+						Computed:      true,
+						PlanModifiers: []planmodifier.String{stringplanmodifier.UseNonNullStateForUnknown()},
+						Validators:    []validator.String{autoscaler.PositiveDurationStringValidator("unneeded time to scale down")},
+					},
+					utilizationThresholdAttribute: schema.StringAttribute{
+						Description: "Node utilization level, defined as sum of requested resources divided " +
+							"by capacity, below which a node can be considered for scale down.",
+						Optional:      true,
+						Computed:      true,
+						PlanModifiers: []planmodifier.String{stringplanmodifier.UseNonNullStateForUnknown()},
+						Validators: []validator.String{
+							autoscaler.StringFloatRangeValidator("utilization threshold validation", 0.0, 1.0),
+						},
+					},
+					delayAfterAddAttribute: schema.StringAttribute{
+						Description:   "How long after scale up that scale down evaluation resumes.",
+						Optional:      true,
+						Computed:      true,
+						PlanModifiers: []planmodifier.String{stringplanmodifier.UseNonNullStateForUnknown()},
+						Validators:    []validator.String{autoscaler.PositiveDurationStringValidator("delay after add validation")},
+					},
+					delayAfterDeleteAttribute: schema.StringAttribute{
+						Description:   "How long after node deletion that scale down evaluation resumes.",
+						Optional:      true,
+						Computed:      true,
+						PlanModifiers: []planmodifier.String{stringplanmodifier.UseNonNullStateForUnknown()},
+						Validators:    []validator.String{autoscaler.PositiveDurationStringValidator("delay after delete validation")},
+					},
+					delayAfterFailureAttribute: schema.StringAttribute{
+						Description:   "How long after scale down failure that scale down evaluation resumes.",
+						Optional:      true,
+						Computed:      true,
+						PlanModifiers: []planmodifier.String{stringplanmodifier.UseNonNullStateForUnknown()},
+						Validators:    []validator.String{autoscaler.PositiveDurationStringValidator("delay after failure validation")},
+					},
+				},
 			},
 			"resource_limits": schema.SingleNestedAttribute{
 				Description: "Constraints of autoscaling resources.",
@@ -183,8 +246,11 @@ func (r *ClusterAutoscalerResource) Create(ctx context.Context, request resource
 	}
 
 	object := update.Body()
-	state := &ClusterAutoscalerState{}
-	populateAutoscalerState(object, plan.Cluster.ValueString(), state)
+	state := &ClusterAutoscalerState{BalancingIgnoredLabels: plan.BalancingIgnoredLabels}
+	if err := populateAutoscalerState(object, plan.Cluster.ValueString(), state); err != nil {
+		response.Diagnostics.AddError("Failed reading cluster autoscaler", err.Error())
+		return
+	}
 
 	diags = response.State.Set(ctx, state)
 	response.Diagnostics.Append(diags...)
@@ -222,7 +288,10 @@ func (r *ClusterAutoscalerResource) Read(ctx context.Context, request resource.R
 		return
 	}
 
-	populateAutoscalerState(getResponse.Body(), state.Cluster.ValueString(), state)
+	if err := populateAutoscalerState(getResponse.Body(), state.Cluster.ValueString(), state); err != nil {
+		response.Diagnostics.AddError("Failed reading cluster autoscaler", err.Error())
+		return
+	}
 	diags = response.State.Set(ctx, state)
 	response.Diagnostics.Append(diags...)
 }
@@ -292,8 +361,11 @@ func (r *ClusterAutoscalerResource) Update(ctx context.Context, request resource
 	}
 
 	object := update.Body()
-	state = &ClusterAutoscalerState{}
-	populateAutoscalerState(object, plan.Cluster.ValueString(), state)
+	state = &ClusterAutoscalerState{BalancingIgnoredLabels: plan.BalancingIgnoredLabels}
+	if err := populateAutoscalerState(object, plan.Cluster.ValueString(), state); err != nil {
+		response.Diagnostics.AddError("Failed reading cluster autoscaler", err.Error())
+		return
+	}
 
 	diags = response.State.Set(ctx, state)
 	response.Diagnostics.Append(diags...)
@@ -357,6 +429,33 @@ func populateAutoscalerState(object *cmv1.ClusterAutoscaler, clusterId string, s
 
 	state.MaxNodeProvisionTime = common.EmptiableStringToStringType(object.MaxNodeProvisionTime())
 
+	if labels, exists := object.GetBalancingIgnoredLabels(); exists {
+		list, err := common.StringArrayToList(labels)
+		if err != nil {
+			return err
+		}
+		state.BalancingIgnoredLabels = list
+	} else if state.BalancingIgnoredLabels.IsNull() || state.BalancingIgnoredLabels.IsUnknown() ||
+		len(state.BalancingIgnoredLabels.Elements()) != 0 {
+		state.BalancingIgnoredLabels = types.ListNull(types.StringType)
+	}
+
+	state.ScaleDown = types.ObjectNull(scaleDownAttributeTypes)
+	if scaleDown := object.ScaleDown(); scaleDown != nil {
+		enabled := types.BoolNull()
+		if value, exists := scaleDown.GetEnabled(); exists {
+			enabled = types.BoolValue(value)
+		}
+		state.ScaleDown = types.ObjectValueMust(scaleDownAttributeTypes, map[string]attr.Value{
+			enabledAttribute:              enabled,
+			unneededTimeAttribute:         common.EmptiableStringToStringType(scaleDown.UnneededTime()),
+			utilizationThresholdAttribute: common.EmptiableStringToStringType(scaleDown.UtilizationThreshold()),
+			delayAfterAddAttribute:        common.EmptiableStringToStringType(scaleDown.DelayAfterAdd()),
+			delayAfterDeleteAttribute:     common.EmptiableStringToStringType(scaleDown.DelayAfterDelete()),
+			delayAfterFailureAttribute:    common.EmptiableStringToStringType(scaleDown.DelayAfterFailure()),
+		})
+	}
+
 	state.ResourceLimits = types.ObjectNull(resourceLimitsAttributeTypes)
 	if object.ResourceLimits() != nil {
 		maxNodesTotal := types.Int64Null()
@@ -394,6 +493,34 @@ func clusterAutoscalerStateToObject(state *ClusterAutoscalerState) (*cmv1.Cluste
 		}
 
 		builder.ResourceLimits(resourceLimitsBuilder)
+	}
+
+	if !state.BalancingIgnoredLabels.IsNull() && !state.BalancingIgnoredLabels.IsUnknown() {
+		builder.BalancingIgnoredLabels(common.OptionalList(state.BalancingIgnoredLabels)...)
+	}
+
+	if !state.ScaleDown.IsNull() && !state.ScaleDown.IsUnknown() {
+		values := state.ScaleDown.Attributes()
+		scaleDown := cmv1.NewAutoscalerScaleDownConfig()
+		if value := values[enabledAttribute].(types.Bool); !value.IsNull() && !value.IsUnknown() {
+			scaleDown.Enabled(value.ValueBool())
+		}
+		if value := values[unneededTimeAttribute].(types.String); !value.IsNull() && !value.IsUnknown() {
+			scaleDown.UnneededTime(value.ValueString())
+		}
+		if value := values[utilizationThresholdAttribute].(types.String); !value.IsNull() && !value.IsUnknown() {
+			scaleDown.UtilizationThreshold(value.ValueString())
+		}
+		if value := values[delayAfterAddAttribute].(types.String); !value.IsNull() && !value.IsUnknown() {
+			scaleDown.DelayAfterAdd(value.ValueString())
+		}
+		if value := values[delayAfterDeleteAttribute].(types.String); !value.IsNull() && !value.IsUnknown() {
+			scaleDown.DelayAfterDelete(value.ValueString())
+		}
+		if value := values[delayAfterFailureAttribute].(types.String); !value.IsNull() && !value.IsUnknown() {
+			scaleDown.DelayAfterFailure(value.ValueString())
+		}
+		builder.ScaleDown(scaleDown)
 	}
 
 	return builder.Build()

@@ -22,14 +22,33 @@ import (
 )
 
 type ClusterAutoscalerState struct {
-	Cluster              types.String `tfsdk:"cluster"`
-	MaxPodGracePeriod    types.Int64  `tfsdk:"max_pod_grace_period"`
-	PodPriorityThreshold types.Int64  `tfsdk:"pod_priority_threshold"`
-	MaxNodeProvisionTime types.String `tfsdk:"max_node_provision_time"`
-	ResourceLimits       types.Object `tfsdk:"resource_limits"`
+	Cluster                types.String `tfsdk:"cluster"`
+	MaxPodGracePeriod      types.Int64  `tfsdk:"max_pod_grace_period"`
+	PodPriorityThreshold   types.Int64  `tfsdk:"pod_priority_threshold"`
+	MaxNodeProvisionTime   types.String `tfsdk:"max_node_provision_time"`
+	ResourceLimits         types.Object `tfsdk:"resource_limits"`
+	BalancingIgnoredLabels types.List   `tfsdk:"balancing_ignored_labels"`
+	ScaleDown              types.Object `tfsdk:"scale_down"`
 }
 
-const maxNodesTotalAttribute = "max_nodes_total"
+const (
+	maxNodesTotalAttribute        = "max_nodes_total"
+	enabledAttribute              = "enabled"
+	unneededTimeAttribute         = "unneeded_time"
+	utilizationThresholdAttribute = "utilization_threshold"
+	delayAfterAddAttribute        = "delay_after_add"
+	delayAfterDeleteAttribute     = "delay_after_delete"
+	delayAfterFailureAttribute    = "delay_after_failure"
+)
+
+var scaleDownAttributeTypes = map[string]attr.Type{
+	enabledAttribute:              types.BoolType,
+	unneededTimeAttribute:         types.StringType,
+	utilizationThresholdAttribute: types.StringType,
+	delayAfterAddAttribute:        types.StringType,
+	delayAfterDeleteAttribute:     types.StringType,
+	delayAfterFailureAttribute:    types.StringType,
+}
 
 var resourceLimitsAttributeTypes = map[string]attr.Type{
 	maxNodesTotalAttribute: types.Int64Type,
