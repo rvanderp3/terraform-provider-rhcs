@@ -171,6 +171,7 @@ var _ = Describe("Hcp Cluster Autoscaler", func() {
 				"cluster": "123", "max_pod_grace_period": float64(600),
 				"pod_priority_threshold": float64(-10), "max_node_provision_time": "15m",
 				"resource_limits":          map[string]any{"max_nodes_total": float64(180)},
+				"expanders":                nil,
 				"balancing_ignored_labels": nil,
 				"scale_down":               nil,
 			}))
@@ -322,6 +323,7 @@ var _ = Describe("Hcp Cluster Autoscaler", func() {
 					"max_pod_grace_period":     nil,
 					"pod_priority_threshold":   nil,
 					"max_node_provision_time":  "1h",
+					"expanders":                nil,
 					"resource_limits":          nil,
 					"balancing_ignored_labels": nil,
 					"scale_down":               nil,
@@ -388,6 +390,7 @@ var _ = Describe("Hcp Cluster Autoscaler", func() {
 					"max_pod_grace_period":     nil,
 					"pod_priority_threshold":   nil,
 					"max_node_provision_time":  "2h",
+					"expanders":                nil,
 					"resource_limits":          nil,
 					"balancing_ignored_labels": nil,
 					"scale_down":               nil,

@@ -232,6 +232,7 @@ var _ = Describe("HCP autoscaler ported fields", func() {
 		output.VerifyErrorContainsSubstring(reason)
 		Expect(TestServer.ReceivedRequests()).To(HaveLen(2))
 	},
+		Entry("expanders on an old cluster version", `expanders = ["Priority"]`, "Attribute 'expanders' requires hosted cluster version 4.20 or newer."),
 		Entry("old cluster version", `scale_down = { enabled = true }`, "Attribute 'scale_down' requires hosted cluster version 4.20 or newer."),
 		Entry("subsecond duration", `scale_down = { unneeded_time = "500ms" }`, "scale_down.unneeded_time must be a whole number of seconds."),
 		Entry("excess ratio precision", `scale_down = { utilization_threshold = "0.555" }`, "scale_down.utilization_threshold supports at most 2 decimal places."),

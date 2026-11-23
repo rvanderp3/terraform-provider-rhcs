@@ -28,6 +28,7 @@ type ClusterAutoscalerState struct {
 	MaxNodeProvisionTime   types.String `tfsdk:"max_node_provision_time"`
 	ResourceLimits         types.Object `tfsdk:"resource_limits"`
 	BalancingIgnoredLabels types.List   `tfsdk:"balancing_ignored_labels"`
+	Expanders              types.List   `tfsdk:"expanders"`
 	ScaleDown              types.Object `tfsdk:"scale_down"`
 }
 

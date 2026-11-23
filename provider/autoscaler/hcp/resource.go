@@ -111,6 +111,22 @@ func (r *ClusterAutoscalerResource) Schema(ctx context.Context, req resource.Sch
 				PlanModifiers: []planmodifier.List{listplanmodifier.UseNonNullStateForUnknown()},
 				Validators:    []validator.List{listvalidator.SizeAtMost(64)},
 			},
+			"expanders": schema.ListAttribute{
+				Description: "Ordered scale-up strategies: Priority, LeastWaste, and Random. " +
+					"Requires 1 to 3 unique values in the exact casing shown. Order is significant. " +
+					"When combining strategies, Random must be last; the API enforces this ordering rule. " +
+					"Requires HCP cluster version 4.20 or newer.",
+				ElementType:   types.StringType,
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.List{listplanmodifier.UseNonNullStateForUnknown()},
+				Validators: []validator.List{
+					listvalidator.SizeBetween(1, 3),
+					listvalidator.UniqueValues(),
+					listvalidator.NoNullValues(),
+					listvalidator.ValueStringsAre(stringvalidator.OneOf("Priority", "LeastWaste", "Random")),
+				},
+			},
 			"scale_down": schema.SingleNestedAttribute{
 				Description: "Configuration of scale down operation. Requires HCP cluster version 4.20 or newer.",
 				Optional:    true,
@@ -461,6 +477,15 @@ func populateAutoscalerState(object *cmv1.ClusterAutoscaler, clusterId string, s
 		state.BalancingIgnoredLabels = types.ListNull(types.StringType)
 	}
 
+	state.Expanders = types.ListNull(types.StringType)
+	if expanders, exists := object.GetExpanders(); exists {
+		list, err := common.StringArrayToList(expanders)
+		if err != nil {
+			return err
+		}
+		state.Expanders = list
+	}
+
 	state.ScaleDown = types.ObjectNull(scaleDownAttributeTypes)
 	if scaleDown := object.ScaleDown(); scaleDown != nil {
 		enabled := types.BoolNull()
@@ -518,6 +543,10 @@ func clusterAutoscalerStateToObject(state *ClusterAutoscalerState) (*cmv1.Cluste
 
 	if !state.BalancingIgnoredLabels.IsNull() && !state.BalancingIgnoredLabels.IsUnknown() {
 		builder.BalancingIgnoredLabels(common.OptionalList(state.BalancingIgnoredLabels)...)
+	}
+
+	if !state.Expanders.IsNull() && !state.Expanders.IsUnknown() {
+		builder.Expanders(common.OptionalList(state.Expanders)...)
 	}
 
 	if !state.ScaleDown.IsNull() && !state.ScaleDown.IsUnknown() {

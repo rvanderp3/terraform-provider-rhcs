@@ -10,6 +10,7 @@ resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
 
   # These settings require an HCP cluster running version 4.20 or newer.
   balancing_ignored_labels = ["custom.label/zone"]
+  expanders                = ["Priority", "LeastWaste"]
   scale_down = {
     enabled               = true
     unneeded_time         = "10m"

@@ -14,7 +14,7 @@ Omitted settings use the values returned by the API. Removing a setting from
 configuration retains its current value; it does not reset the setting to a
 default. Configure an explicit value to change it.
 
-The `balancing_ignored_labels` and `scale_down` settings require HCP cluster
+The `balancing_ignored_labels`, `expanders`, and `scale_down` settings require HCP cluster
 version 4.20 or newer. The API enforces this minimum version, whole-second
 scale-down durations from 0 to 24 hours, and at most two decimal places for
 `scale_down.utilization_threshold`. Ratios use strings such as `"0.5"` for 50%.
@@ -50,6 +50,7 @@ resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
 
   # These settings require an HCP cluster running version 4.20 or newer.
   balancing_ignored_labels = ["custom.label/zone"]
+  expanders                = ["Priority", "LeastWaste"]
   scale_down = {
     enabled               = true
     unneeded_time         = "10m"
@@ -71,6 +72,7 @@ resource "rhcs_hcp_cluster_autoscaler" "cluster_autoscaler" {
 ### Optional
 
 - `balancing_ignored_labels` (List of String) Labels that cluster autoscaler should ignore when considering node group similarity. Requires HCP cluster version 4.20 or newer.
+- `expanders` (List of String) Ordered scale-up strategies: Priority, LeastWaste, and Random. Requires 1 to 3 unique values in the exact casing shown. Order is significant. When combining strategies, Random must be last; the API enforces this ordering rule. Requires HCP cluster version 4.20 or newer.
 - `max_node_provision_time` (String) Maximum time cluster-autoscaler waits for node to be provisioned.
 - `max_pod_grace_period` (Number) Gives pods graceful termination time before scaling down.
 - `pod_priority_threshold` (Number) To allow users to schedule 'best-effort' pods, which shouldn't trigger Cluster Autoscaler actions, but only run when there are spare resources available.
